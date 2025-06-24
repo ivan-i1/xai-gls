@@ -15,7 +15,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 # --- 1. CONFIGURATION PARAMETERS (from Table 3 & text) ---
 # Set the path to your dataset directory
 # IMPORTANT: Change this path to where you have stored the dataset
-DATA_DIR = '../data/trainTest/' 
+DATA_DIR = './data/images/' 
 
 TRAIN_DIR = os.path.join(DATA_DIR, 'TRAIN')
 TEST_DIR = os.path.join(DATA_DIR, 'TEST')
@@ -149,21 +149,21 @@ def build_proposed_model(input_shape=IMG_SHAPE, num_classes=NUM_CLASSES):
     inputs = Input(shape=input_shape)
 
     # Initial Convolutional Block [139]
-    x = Conv2D(16, (3, 3), padding='same', activation='relu', kernel_initializer=initializer)(inputs)
-    x = Conv2D(16, (3, 3), padding='same', activation='relu', kernel_initializer=initializer)(x)
+    x = Conv2D(16, (3, 3), padding='same', activation='relu' )(inputs)
+    x = Conv2D(16, (3, 3), padding='same', activation='relu' )(x)
     x = MaxPooling2D(pool_size=(2, 2))(x)
 
     # Separable Convolutional Blocks [140] (filter counts from Fig. 4)
-    x = SeparableConv2D(32, (3, 3), padding='same', activation='relu', kernel_initializer=initializer)(x)
+    x = SeparableConv2D(32, (3, 3), padding='same', activation='relu' )(x)
     x = BatchNormalization()(x)
     x = MaxPooling2D(pool_size=(2, 2))(x)
 
     # Fourth and Fifth blocks with dropout [142]
-    x = SeparableConv2D(64, (3, 3), padding='same', activation='relu', kernel_initializer=initializer)(x)
+    x = SeparableConv2D(64, (3, 3), padding='same', activation='relu' )(x)
     x = BatchNormalization()(x)
     x = Dropout(0.2)(x)
     
-    x = SeparableConv2D(128, (3, 3), padding='same', activation='relu', kernel_initializer=initializer)(x)
+    x = SeparableConv2D(128, (3, 3), padding='same', activation='relu' )(x)
     x = BatchNormalization()(x)
     x = Dropout(0.2)(x)
 
@@ -171,11 +171,11 @@ def build_proposed_model(input_shape=IMG_SHAPE, num_classes=NUM_CLASSES):
     x = Flatten()(x)
 
     # Fully Connected Layers with specific dropouts and 'tanh' activation [144-146]
-    x = Dense(512, activation='tanh', kernel_initializer=initializer)(x)
+    x = Dense(512, activation='tanh' )(x)
     x = Dropout(0.7)(x)
-    x = Dense(128, activation='tanh', kernel_initializer=initializer)(x)
+    x = Dense(128, activation='tanh' )(x)
     x = Dropout(0.5)(x)
-    x = Dense(64, activation='tanh', kernel_initializer=initializer)(x)
+    x = Dense(64, activation='tanh' )(x)
     x = Dropout(0.3)(x)
 
     # Output Layer [147]
