@@ -20,10 +20,10 @@ from skimage.segmentation import mark_boundaries
 # y should be a numpy array of shape (7132,) with integer labels for the 4 classes.
 
 # Placeholder data - REPLACE WITH YOUR ACTUAL DATA
-# The paper mentions 7132 images in total, resized to 180x180x3 
+# The paper mentions 7132 images in total, resized to 180x180x3
 X = np.random.rand(7132, 180, 180, 3)
 y = np.random.randint(0, 4, 7132)
-class_names = ['COVID-19', 'Normal', 'Pneumonia', 'Tuberculosis']
+class_names = ['COVID-19', 'Normal', 'Pneumonia']
 
 # Image pixel normalization to [0, 1] as mentioned in the paper 
 X = X / 255.0

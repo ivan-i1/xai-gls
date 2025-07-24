@@ -12,6 +12,10 @@ import os
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, confusion_matrix
 
+import lime
+import lime.lime_image
+from skimage.segmentation import mark_boundaries
+
 # --- 1. CONFIGURATION PARAMETERS (from Table 3 & text) ---
 # Set the path to your dataset directory
 # IMPORTANT: Change this path to where you have stored the dataset
@@ -244,4 +248,36 @@ print("\nClassification Report (similar to Table 6):")
 print(classification_report(y_true_indices, y_pred, target_names=CLASS_NAMES))
 
 print("\nReplication script finished.")
-    
+
+# --- 4. Model Explanation with XAI ---
+# Using the model from the last fold for demonstration
+
+# Select a sample image from the test set for explanation
+sample_image = train_dataset.as_numpy_iterator().next()
+sample_label = test_dataset.as_numpy_iterator().next()
+
+print(f"\n--- Generating XAI Explanations for a sample image ---")
+print(f"True Label: {CLASS_NAMES[sample_label]}")
+preds = proposed_model.predict(sample_image)
+print(f"Predicted Label: {CLASS_NAMES[np.argmax(preds)]} with probability {np.max(preds):.4f}")
+
+# 4.2 LIME (Local Interpretable Model-agnostic Explanations)
+# LIME explains the predictions of any classifier by learning an interpretable model locally around the prediction.
+# The paper uses LIME with super-pixels to segment the important regions 
+explainer_lime = lime.lime_image.LimeImageExplainer()
+explanation_lime = explainer_lime.explain_instance(sample_image[0],
+                                                   model.predict,
+                                                   top_labels=1,
+                                                   hide_color=0,
+                                                   num_samples=1000)
+
+print("\nDisplaying LIME explanation plot...")
+temp, mask = explanation_lime.get_image_and_mask(explanation_lime.top_labels[0],
+                                                 positive_only=True,
+                                                 num_features=5,
+                                                 hide_rest=False)
+
+plt.imshow(mark_boundaries(temp, mask))
+plt.title("LIME Explanation")
+plt.axis('off')
+plt.show()
