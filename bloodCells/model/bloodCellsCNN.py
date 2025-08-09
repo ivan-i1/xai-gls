@@ -11,38 +11,28 @@ import cv2
 import os
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, confusion_matrix
+import shap
+import lime
+import lime.lime_image
+from skimage.segmentation import mark_boundaries
 
-# --- 1. CONFIGURATION PARAMETERS (from Table 3 & text) ---
-# Set the path to your dataset directory
-# IMPORTANT: Change this path to where you have stored the dataset
 DATA_DIR = './data/images/' 
 
 TRAIN_DIR = os.path.join(DATA_DIR, 'TRAIN')
 TEST_DIR = os.path.join(DATA_DIR, 'TEST')
 
-# Model and training parameters from the paper
-IMG_WIDTH = 120  # As per 'Image resize' section [111]
-IMG_HEIGHT = 120 # As per 'Image resize' section [111]
+IMG_WIDTH = 120
+IMG_HEIGHT = 120
 IMG_CHANNELS = 3
 IMG_SHAPE = (IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS)
-BATCH_SIZE = 64  # From Table 3 [212]
-EPOCHS = 30      # From Table 3 [212]
-LEARNING_RATE = 0.00001 # From Table 3 [212]
+BATCH_SIZE = 64
+EPOCHS = 30
+LEARNING_RATE = 0.00001
 CLASS_NAMES = ['EOSINOPHIL', 'LYMPHOCYTE', 'MONOCYTE', 'NEUTROPHIL']
 NUM_CLASSES = len(CLASS_NAMES)
 
-# --- 2. IMAGE PRE-PROCESSING PIPELINE (as described in the paper) ---
 
 def preprocess_image(image):
-    """
-    Applies the full pre-processing pipeline described in the paper:
-    1. Padding
-    2. Thresholding
-    3. Morphological Opening (Erosion -> Dilation)
-    4. Masking to extract the cell
-    
-    This function is designed for use with tf.py_function.
-    """
     # Decode image if it's in a tensor format
     if isinstance(image, tf.Tensor):
         image = image.numpy().astype(np.uint8)
@@ -50,18 +40,17 @@ def preprocess_image(image):
     # 1. Padding: Add a 10-pixel border [119]
     image_padded = cv2.copyMakeBorder(image, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=[255, 255, 255])
 
-    # 2. Thresholding: Convert to HSV and create a mask to isolate the cell [127]
-    # The paper's mention of color ranges suggests HSV-based color masking.
+    # 2. Thresholding: Convert to HSV and create a mask to isolate the cell
     hsv = cv2.cvtColor(image_padded, cv2.COLOR_BGR2HSV)
     lower_bound = np.array([80, 80, 80])
     upper_bound = np.array([180, 255, 255]) 
     mask = cv2.inRange(hsv, lower_bound, upper_bound)
 
-    # 3. Morphological Opening: Reduce noise and separate clusters [129, 153]
+    # 3. Morphological Opening: Reduce noise and separate cluster
     kernel = np.ones((5, 5), np.uint8)
     opening = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
 
-    # 4. Masking: Apply the mask to the padded image [135]
+    # 4. Masking: Apply the mask to the padded image
     res = cv2.bitwise_and(image_padded, image_padded, mask=opening)
     
     # Set background to black for consistency
@@ -83,12 +72,7 @@ def tf_preprocess(x, y):
     x.set_shape([IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS])
     return x, y
 
-# --- 3. DATA LOADING ---
 print("Loading and preprocessing data...")
-# Load datasets from directory. Note: The paper's pre-processing is not applied here.
-# It is generally better to preprocess within the model or using a tf.data map.
-# For simplicity in this script, we will proceed without the custom preprocessing.
-# To apply it, you would use: train_dataset = train_dataset.map(tf_preprocess)
 
 train_dataset = tf.keras.utils.image_dataset_from_directory(
     TRAIN_DIR,
@@ -98,7 +82,7 @@ train_dataset = tf.keras.utils.image_dataset_from_directory(
     image_size=(IMG_HEIGHT, IMG_WIDTH),
     batch_size=BATCH_SIZE,
     shuffle=True,
-    validation_split=0.15, # Use 15% of training data for validation [103]
+    validation_split=0.15,
     subset='training',
     seed=123
 )
@@ -126,7 +110,6 @@ test_dataset = tf.keras.utils.image_dataset_from_directory(
     shuffle=False
 )
 
-# Normalize the datasets
 def normalize_func(image, label):
     return image / 255.0, label
 
@@ -136,29 +119,24 @@ test_dataset = test_dataset.map(normalize_func)
 
 print(f"Training batches: {len(train_dataset)}, Validation batches: {len(validation_dataset)}, Test batches: {len(test_dataset)}")
 
-# --- 4. MODEL ARCHITECTURE (PROPOSED CNN) ---
 
-def build_proposed_model(input_shape=IMG_SHAPE, num_classes=NUM_CLASSES):
-    """
-    Builds the custom CNN model as described in the paper's
-    'Proposed model' and 'System architecture' sections.
-    """
-    # Weight initialization as per the paper [168]
+def create_cnn_model(input_shape=IMG_SHAPE, num_classes=NUM_CLASSES):
+    # Weight initialization
     initializer = 'glorot_uniform'
 
     inputs = Input(shape=input_shape)
 
-    # Initial Convolutional Block [139]
+    # Initial Convolutional Block
     x = Conv2D(16, (3, 3), padding='same', activation='relu' )(inputs)
     x = Conv2D(16, (3, 3), padding='same', activation='relu' )(x)
     x = MaxPooling2D(pool_size=(2, 2))(x)
 
-    # Separable Convolutional Blocks [140] (filter counts from Fig. 4)
+    # Separable Convolutional Blocks
     x = SeparableConv2D(32, (3, 3), padding='same', activation='relu' )(x)
     x = BatchNormalization()(x)
     x = MaxPooling2D(pool_size=(2, 2))(x)
 
-    # Fourth and Fifth blocks with dropout [142]
+    # Fourth and Fifth blocks with dropout
     x = SeparableConv2D(64, (3, 3), padding='same', activation='relu' )(x)
     x = BatchNormalization()(x)
     x = Dropout(0.2)(x)
@@ -167,10 +145,10 @@ def build_proposed_model(input_shape=IMG_SHAPE, num_classes=NUM_CLASSES):
     x = BatchNormalization()(x)
     x = Dropout(0.2)(x)
 
-    # Flatten for fully connected layers [143]
+    # Flatten for fully connected layers
     x = Flatten()(x)
 
-    # Fully Connected Layers with specific dropouts and 'tanh' activation [144-146]
+    # Fully Connected Layers with specific dropouts and 'tanh' activation
     x = Dense(512, activation='tanh' )(x)
     x = Dropout(0.7)(x)
     x = Dense(128, activation='tanh' )(x)
@@ -184,54 +162,54 @@ def build_proposed_model(input_shape=IMG_SHAPE, num_classes=NUM_CLASSES):
     model = Model(inputs=inputs, outputs=outputs, name='Proposed_CNN_Model')
     return model
 
-# --- 5. MODEL COMPILATION AND TRAINING ---
+if(not os.path.exists('my_model.keras')):
+    proposed_model = create_cnn_model()
+    proposed_model.summary()
 
-proposed_model = build_proposed_model()
-proposed_model.summary()
+    optimizer = Nadam(learning_rate=LEARNING_RATE)
+    proposed_model.compile(optimizer=optimizer,
+                        loss='categorical_crossentropy',
+                        metrics=['accuracy'])
 
-# Compile the model as per Table 3 [212]
-optimizer = Nadam(learning_rate=LEARNING_RATE)
-proposed_model.compile(optimizer=optimizer,
-                       loss='categorical_crossentropy',
-                       metrics=['accuracy'])
+    print("\nTraining the Proposed CNN Model...")
 
-# Train the model
-print("\nTraining the Proposed CNN Model...")
-history = proposed_model.fit(
-    train_dataset,
-    epochs=EPOCHS,
-    validation_data=validation_dataset,
-    verbose=1
-)
+    history = proposed_model.fit(
+        train_dataset,
+        epochs=EPOCHS,
+        validation_data=validation_dataset,
+        verbose=1
+    )
+    proposed_model.save('my_model.keras')
+    print("\nEvaluating the Proposed Model...")
 
-# --- 6. EVALUATION ---
-print("\nEvaluating the Proposed Model...")
+    # Plotting accuracy and loss curves
+    acc = history.history['accuracy']
+    val_acc = history.history['val_accuracy']
+    loss = history.history['loss']
+    val_loss = history.history['val_loss']
 
-# Plotting accuracy and loss curves
-acc = history.history['accuracy']
-val_acc = history.history['val_accuracy']
-loss = history.history['loss']
-val_loss = history.history['val_loss']
+    epochs_range = range(EPOCHS)
 
-epochs_range = range(EPOCHS)
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs_range, acc, label='Training Accuracy')
+    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+    plt.legend(loc='lower right')
+    plt.title('Training and Validation Accuracy')
 
-plt.figure(figsize=(12, 5))
-plt.subplot(1, 2, 1)
-plt.plot(epochs_range, acc, label='Training Accuracy')
-plt.plot(epochs_range, val_acc, label='Validation Accuracy')
-plt.legend(loc='lower right')
-plt.title('Training and Validation Accuracy')
-
-plt.subplot(1, 2, 2)
-plt.plot(epochs_range, loss, label='Training Loss')
-plt.plot(epochs_range, val_loss, label='Validation Loss')
-plt.legend(loc='upper right')
-plt.title('Training and Validation Loss')
-plt.show()
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs_range, loss, label='Training Loss')
+    plt.plot(epochs_range, val_loss, label='Validation Loss')
+    plt.legend(loc='upper right')
+    plt.title('Training and Validation Loss')
+    plt.savefig("training_validation_loss.png")
+else:
+    proposed_model = tf.keras.models.load_model('my_model.keras')
+    print("Model loaded from 'my_model.keras'.")
 
 # Evaluate on the test set
 loss, accuracy = proposed_model.evaluate(test_dataset)
-print(f"Test Accuracy: {accuracy*100:.2f}%") # Paper achieves 99.12% [7]
+print(f"Test Accuracy: {accuracy*100:.2f}%")
 print(f"Test Loss: {loss:.4f}")
 
 # Generate Classification Report and Confusion Matrix
@@ -244,3 +222,95 @@ print("\nClassification Report (similar to Table 6):")
 print(classification_report(y_true_indices, y_pred, target_names=CLASS_NAMES))
 
 print("\nReplication script finished.")
+
+# Extract a batch from the test dataset for explanation
+ # Get the first image in the batch
+test_images, test_labels = next(iter(test_dataset))
+sample_image = test_images[0:1]
+sample_label = test_labels[0]
+
+# Extract a batch from the training dataset for SHAP background
+background_images, _ = next(iter(train_dataset.take(1)))
+
+print(f"\n--- Generating XAI Explanations for a sample image ---")
+print(f"True Label: {CLASS_NAMES[np.argmax(sample_label)]}")
+preds = proposed_model.predict(sample_image)
+print(f"Predicted Label: {CLASS_NAMES[np.argmax(preds)]} with probability {np.max(preds):.4f}")
+
+
+# SHAP
+explainer_shap = shap.GradientExplainer(proposed_model, background_images.numpy())
+shap_values = explainer_shap.shap_values(sample_image.numpy())
+
+print("\nDisplaying SHAP explanation plot...")
+shap.image_plot(shap_values, -sample_image.numpy(), show=False)
+plt.suptitle("SHAP Explanation")
+plt.savefig('shap01.png')
+
+# LIME
+explainer_lime = lime.lime_image.LimeImageExplainer()
+explanation_lime = explainer_lime.explain_instance(
+    sample_image[0].numpy().astype('double'),
+    proposed_model.predict,
+    top_labels=1,
+    hide_color=0,
+    num_samples=1000
+)
+
+print("\nDisplaying LIME explanation plot...")
+temp, mask = explanation_lime.get_image_and_mask(
+    explanation_lime.top_labels[0],
+    positive_only=True,
+    num_features=5,
+    hide_rest=False
+)
+
+plt.imshow(mark_boundaries(temp, mask))
+plt.title("LIME Explanation")
+plt.axis('off')
+plt.savefig('lime01.png')
+
+# Grad-CAM
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    grad_model = tf.keras.models.Model(
+        [model.inputs], [model.get_layer(last_conv_layer_name).output, model.output]
+    )
+    with tf.GradientTape() as tape:
+        last_conv_layer_output, preds = grad_model(img_array)
+        if pred_index is None:
+            pred_index = tf.argmax(preds[0])
+        class_channel = preds[:, pred_index]
+    grads = tape.gradient(class_channel, last_conv_layer_output)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    last_conv_layer_output = last_conv_layer_output[0]
+    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    return heatmap.numpy()
+
+# Find the name of the last convolutional layer
+last_conv_layer_name = [layer.name for layer in proposed_model.layers if "conv2d" in layer.name][-1]
+heatmap = make_gradcam_heatmap(sample_image, proposed_model, last_conv_layer_name)
+
+print("\nDisplaying Grad-CAM heatmap...")
+plt.matshow(heatmap)
+plt.title("Grad-CAM Heatmap")
+plt.savefig('gradcam01.png')
+
+# Superimpose the heatmap on the original image
+img = sample_image[0].numpy()
+heatmap = np.uint8(255 * heatmap)
+jet = plt.get_cmap("jet")
+jet_colors = jet(np.arange(256))[:, :3]
+jet_heatmap = jet_colors[heatmap]
+jet_heatmap = tf.keras.preprocessing.image.array_to_img(jet_heatmap)
+jet_heatmap = jet_heatmap.resize((img.shape[1], img.shape[0]))
+jet_heatmap = tf.keras.preprocessing.image.img_to_array(jet_heatmap)
+
+superimposed_img = jet_heatmap * 0.4 + img
+superimposed_img = tf.keras.preprocessing.image.array_to_img(superimposed_img)
+
+plt.imshow(superimposed_img)
+plt.title("Grad-CAM Superimposed")
+plt.axis('off')
+plt.savefig('gradcam_superimposed01.png')

@@ -11,16 +11,10 @@ import lime
 import lime.lime_image
 from skimage.segmentation import mark_boundaries
 
-# --- 1. Data Loading and Parameters ---
-# This section is based on your provided code snippet.
-# NOTE: The original paper used 4 classes, while this setup uses 3.
-# The image size and training parameters have also been adjusted as per your request.
-
 DATA_DIR = '/Users/ivan/Documents/Repos/xai-gls/chestRays/data/'
 TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 TEST_DIR = os.path.join(DATA_DIR, 'test')
 
-# Model and training parameters
 IMG_WIDTH = 200
 IMG_HEIGHT = 200
 IMG_CHANNELS = 3
@@ -31,11 +25,10 @@ LEARNING_RATE = 0.00001
 CLASS_NAMES = ['NORMAL', 'COVID19', 'PNEUMONIA']
 NUM_CLASSES = len(CLASS_NAMES)
 
-# Create TensorFlow Datasets
 train_dataset = tf.keras.utils.image_dataset_from_directory(
     TRAIN_DIR,
     labels='inferred',
-    label_mode='categorical', # Use 'categorical' for one-hot encoded labels
+    label_mode='categorical',
     class_names=CLASS_NAMES,
     image_size=(IMG_HEIGHT, IMG_WIDTH),
     batch_size=BATCH_SIZE,
@@ -68,7 +61,6 @@ test_dataset = tf.keras.utils.image_dataset_from_directory(
     shuffle=False
 )
 
-# Normalize images to [0, 1] range
 def normalize(image, label):
     image = tf.cast(image, tf.float32) / 255.0
     return image, label
@@ -77,16 +69,8 @@ train_dataset = train_dataset.map(normalize)
 validation_dataset = validation_dataset.map(normalize)
 test_dataset = test_dataset.map(normalize)
 
-
-# --- 2. Proposed CNN Model Architecture (Adapted) ---
-# The architecture from the paper is adapted for the new input shape and number of classes.
 def create_cnn_model(input_shape, num_classes):
-    """
-    Creates the lightweight CNN model described in the paper.
-    """
     inputs = Input(shape=input_shape)
-
-    # [cite_start]Convolutional Blocks from the paper [cite: 159, 160]
     # Block 1
     x = Conv2D(filters=3, kernel_size=(3, 3), activation='relu')(inputs)
     x = Conv2D(filters=32, kernel_size=(3, 3), activation='relu')(x)
@@ -114,25 +98,20 @@ def create_cnn_model(input_shape, num_classes):
     x = Dropout(0.45)(x)
     
     # Output Layer
-    outputs = Dense(num_classes, activation='softmax')(x) # Adjusted for num_classes
+    outputs = Dense(num_classes, activation='softmax')(x)
 
     model = Model(inputs=inputs, outputs=outputs)
     return model
 
-# --- 3. Model Training ---
-# [cite_start]NOTE: The paper uses 10-fold cross-validation[cite: 35].
-# This script performs a single training run based on the train/validation split provided.
 if(not os.path.exists('my_model.keras')):
     model = create_cnn_model(IMG_SHAPE, NUM_CLASSES)
 
-    # Compile the model with the specified learning rate and categorical loss
     model.compile(optimizer=Adam(learning_rate=LEARNING_RATE),
-                loss='categorical_crossentropy', # Changed for one-hot labels
+                loss='categorical_crossentropy',
                 metrics=['accuracy'])
 
     model.summary()
 
-    # [cite_start]Early stopping callback as mentioned in the paper [cite: 280]
     early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
 
     print("\n--- Starting Model Training ---")
@@ -142,25 +121,44 @@ if(not os.path.exists('my_model.keras')):
         validation_data=validation_dataset,
         callbacks=[early_stopping]
     )
+    print("\nEvaluating the Proposed Model...")
+
+    acc = history.history['accuracy']
+    val_acc = history.history['val_accuracy']
+    loss = history.history['loss']
+    val_loss = history.history['val_loss']
+
+    epochs_range = range(EPOCHS)
+
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs_range, acc, label='Training Accuracy')
+    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+    plt.legend(loc='lower right')
+    plt.title('Training and Validation Accuracy')
+
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs_range, loss, label='Training Loss')
+    plt.plot(epochs_range, val_loss, label='Validation Loss')
+    plt.legend(loc='upper right')
+    plt.title('Training and Validation Loss')
+    plt.savefig("training_validation_loss.png")
     model.save('my_model.keras')
 else:
-    model = tf.keras.models.load_model('my_model.keras')
+    model = tf.keras.models.load_model('my_model.keraspreviously')
 
-# --- 4. Model Evaluation ---
 print("\n--- Evaluating Model on Test Data ---")
 loss, accuracy = model.evaluate(test_dataset)
 print(f"Test Accuracy: {accuracy:.4f}")
 print(f"Test Loss: {loss:.4f}")
 
-# --- 5. Model Explanation with XAI ---
-# We need to extract a sample image and a background dataset for the explainers.
 
 # Extract a batch from the test dataset for explanation
+ # Get the first image in the batch
 test_images, test_labels = next(iter(test_dataset))
-sample_image = test_images[0:1] # Get the first image in the batch
+sample_image = test_images[0:1]
 sample_label = test_labels[0]
 
-# Extract a batch from the training dataset for SHAP background
 background_images, _ = next(iter(train_dataset.take(1)))
 
 print(f"\n--- Generating XAI Explanations for a sample image ---")
@@ -169,7 +167,7 @@ preds = model.predict(sample_image)
 print(f"Predicted Label: {CLASS_NAMES[np.argmax(preds)]} with probability {np.max(preds):.4f}")
 
 
-# 5.1 SHAP (SHapley Additive exPlanations)
+# SHAP
 explainer_shap = shap.GradientExplainer(model, background_images.numpy())
 shap_values = explainer_shap.shap_values(sample_image.numpy())
 
@@ -178,7 +176,7 @@ shap.image_plot(shap_values, -sample_image.numpy(), show=False)
 plt.suptitle("SHAP Explanation")
 plt.savefig('shap01.png')
 
-# 5.2 LIME (Local Interpretable Model-agnostic Explanations)
+# LIME
 explainer_lime = lime.lime_image.LimeImageExplainer()
 explanation_lime = explainer_lime.explain_instance(
     sample_image[0].numpy().astype('double'),
@@ -201,7 +199,7 @@ plt.title("LIME Explanation")
 plt.axis('off')
 plt.savefig('lime01.png')
 
-# 5.3 Grad-CAM (Gradient-weighted Class Activation Mapping)
+# Grad-CAM
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
     grad_model = tf.keras.models.Model(
         [model.inputs], [model.get_layer(last_conv_layer_name).output, model.output]
